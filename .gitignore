@@ -2,3 +2,9 @@
 *.log
 __pycache__/
 .venv/
+
+# PyInstaller cache
+build/
+*.spec
+dist/*
+!dist/vllm-observability-windows-x64.exe

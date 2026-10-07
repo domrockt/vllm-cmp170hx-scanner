@@ -6,6 +6,24 @@ Self-discovering dashboard for vLLM, NVIDIA GPUs and host hardware. It binds to 
 
 Languages: Deutsch, English, Español, Français, 中文.
 
+
+## Windows
+
+No Python install required. Download or clone the repo and run:
+
+```bat
+dist\vllm-observability-windows-x64.exe
+```
+
+Then open `http://SERVER-IP:8080`. Windows Firewall may ask for permission the first time. Allow it only on private networks if you want other PCs on the LAN to open the dashboard.
+
+The file is a 64-bit Windows console EXE built with Windows Python 3.11. It listens on `0.0.0.0:8080` by default. Another port:
+
+```bat
+set PORT=8090
+dist\vllm-observability-windows-x64.exe
+```
+
 ## Install
 
 ```bash
