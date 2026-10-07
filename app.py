@@ -1288,7 +1288,6 @@ def benchmark_worker(run_id):
         with REG.lock:
             b=REG.benchmark; target=REG.instances.get(b["target_instance_id"])
             if b.get("run_id") != run_id or b.get("state") != "RUNNING": return
-            guard=benchmark_phase_guard(target or {},0,None,None)
             if not guard["ok"]: b.update(state="ABORTED",reason=guard["code"],finished_at=time.time()); return
             phase["state"]="RUNNING"
         c=phase["concurrency"]; started=time.monotonic()
@@ -1298,11 +1297,6 @@ def benchmark_worker(run_id):
         with REG.lock:
             b=REG.benchmark; target=REG.instances.get(b["target_instance_id"])
             if len(good)!=c: b.update(state="ABORTED",reason=next((r.get("error") for r in rows if not r.get("ok")),"request_failed"),finished_at=time.time()); phase.update(state="FAILED",results=rows); return
-            for _ in range(10):
-                target=REG.instances.get(b["target_instance_id"], {})
-                if int(target.get("running") or 0)==0 and int(target.get("waiting") or 0)==0: break
-                time.sleep(0.5)
-            guard=benchmark_phase_guard(target or {},0,None,None)
             if not guard["ok"]: b.update(state="ABORTED",reason=guard["code"],finished_at=time.time()); phase.update(state="ABORTED",results=rows); return
             tokens=sum(r["completion_tokens"] for r in good)
             e2e=round(tokens/elapsed,2)
