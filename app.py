@@ -1140,11 +1140,11 @@ def benchmark_request(endpoint, model, cancel_check=lambda: False):
     """One bounded, OpenAI-compatible baseline request; never changes vLLM."""
     if cancel_check():
         return {"ok": False, "error": "cancelled"}
-    payload = {"model": model, "messages": [{"role": "user", "content": "Reply with BENCHMARK_OK."}], "max_tokens": 512, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    payload = {"model": model, "messages": [{"role": "user", "content": "Reply with BENCHMARK_OK."}], "max_tokens": 2048, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
     started = time.monotonic()
     try:
         req = urllib.request.Request(endpoint + "/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=180) as response:
+        with urllib.request.urlopen(req, timeout=600) as response:
             body = json.loads(response.read().decode("utf-8"))
         usage = body.get("usage") or {}
         completion = usage.get("completion_tokens")
