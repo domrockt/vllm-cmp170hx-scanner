@@ -114,7 +114,7 @@ function renderHeader() {
   const update = byId("last-update");
   update.textContent = `UPDATE ${ageText(freshest)}`;
   update.className = `chip ${freshest != null && freshest <= 10 ? "ok" : "idle"}`;
-  byId("host-label").textContent = `${DATA.label || "local host"} · ${DATA.host || "N/A"}`;
+  byId("host-label").textContent = `${DATA.label || "AI-PC"} · ${DATA.host || "N/A"}`;
   byId("discover-info").textContent = DATA.discover_msg === "OK" ? "" : (DATA.discover_msg || "");
 }
 
@@ -488,7 +488,7 @@ async function benchmarkCancel() {
 function renderAll() {
   if (!DATA) return;
   renderHeader(); renderAlerts(); renderGlobal(); renderInstances(); renderGpus(); renderSystem();
-  renderBenchmark();
+  renderBenchmark(); renderBenchmarkHistory();
 }
 
 byId("range").addEventListener("click", event => {
@@ -571,3 +571,10 @@ byId("fuse-start").addEventListener("click", fuseStart);
 
 initLanguage();
 applyLanguage();
+
+function renderBenchmarkHistory(){
+  const runs=(DATA.benchmark&&DATA.benchmark.history)||[];
+  const body=byId("benchmark-history-body"); if(!body) return;
+  const groups={}; runs.forEach(r=>{(groups[r.model||"unbekannt"] ||= []).push(r)});
+  body.innerHTML=Object.entries(groups).map(([model,items])=>`<details><summary>${escapeHtml(model)} · ${items.length}</summary>${items.slice().reverse().map(r=>`<p><b>${new Date((r.at||0)*1000).toLocaleString()}</b> · ${escapeHtml(r.state||"")}<br>Parameter: ${escapeHtml(JSON.stringify(r.params||{}))}<br>Ergebnis: ${escapeHtml((r.results||[]).map(x=>`C${x.c}: ${x.tokens_s??"N/A"} tok/s`).join(" · "))}</p>`).join("")}</details>`).join("")||"<p>Noch keine gespeicherten Benchmarks.</p>";
+}

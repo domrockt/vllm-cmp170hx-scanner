@@ -15,7 +15,7 @@
   <span id="host-status" class="chip">HOST …</span>
   <span id="vllm-status" class="chip">vLLM …</span>
   <span id="last-update" class="chip">UPDATE …</span>
-  <span id="host-label" class="chip">local host</span>
+  <span id="host-label" class="chip">AI-PC</span>
   <button id="discover" class="button" data-i18n="discover">↻ DISCOVER</button><select id="language" class="button" aria-label="Language"></select>
   <span id="discover-info" class="chip"></span>
   <span class="spacer"></span>
@@ -69,7 +69,8 @@
       <div class="bench-target" id="benchmark-target" aria-label="Ziel-Instanz"></div>
       <div class="bench-reason" id="benchmark-reason" hidden></div>
       <div class="bench-info" id="benchmark-info"></div>
-      <div id="benchmark-feedback" class="bench-feedback" role="status" aria-live="polite"></div>
+      <details id="benchmark-history" class="card"><summary>Benchmark-Historie</summary><div id="benchmark-history-body"></div></details>
+<div id="benchmark-feedback" class="bench-feedback" role="status" aria-live="polite"></div>
       <table class="bench-table" id="benchmark-table" hidden>
         <thead>
           <tr>

@@ -1,3 +1,4 @@
+from pathlib import Path
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -1207,9 +1208,25 @@ def read_fuse_scan():
     return {"state": "COMPLETE", "rows": rows, "findings": fuse_findings(rows), "error": None}
 
 
+
+HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark-history.json")
+
+def model_params(instance):
+    keys=("model","endpoint","max_model_len","max_num_seqs","tensor_parallel_size","tp","gpu_memory_utilization")
+    return {k:instance.get(k) for k in keys if instance.get(k) is not None}
+
+def history_load():
+    try: return json.loads(Path(HISTORY_PATH).read_text(encoding="utf-8"))
+    except Exception: return []
+
+def history_save(run):
+    rows=history_load(); target=run.get("params") or {}
+    rows.append({"at":run.get("finished_at"),"model":run.get("model"),"state":run.get("state"),"params":target,"results":[{"c":x.get("concurrency"),"state":x.get("state"),"tokens_s":x.get("tokens_s"),"duration_s":x.get("duration_s")} for x in run.get("phases",[])]})
+    tmp=HISTORY_PATH+".tmp"; Path(tmp).write_text(json.dumps(rows[-100:],indent=2),encoding="utf-8"); os.replace(tmp,HISTORY_PATH)
+
 def benchmark_public():
     """Return a detached benchmark snapshot while REG.lock is held by caller."""
-    return copy.deepcopy(REG.benchmark)
+    data=copy.deepcopy(REG.benchmark); data["history"]=history_load(); return data
 
 
 def benchmark_start_plan(confirm):
@@ -1273,7 +1290,10 @@ def benchmark_worker(run_id):
                 phase.update(state="FAILED",results=rows,error="missing_throughput_measurement"); return
             phase.update(state="PASS",results=rows,completion_tokens=tokens,duration_s=round(elapsed,3),e2e_s=round(elapsed,3),tokens_s=e2e,e2e_aggregate_tps=e2e)
     with REG.lock:
-        if REG.benchmark.get("run_id")==run_id and REG.benchmark.get("state")=="RUNNING": REG.benchmark.update(state="MAX_TESTED",finished_at=time.time())
+        if REG.benchmark.get("run_id")==run_id and REG.benchmark.get("state")=="RUNNING":
+            target=REG.instances.get(REG.benchmark.get("target_instance_id"),{})
+            REG.benchmark.update(state="MAX_TESTED",finished_at=time.time(),model=target.get("model"),params=model_params(target))
+            history_save(dict(REG.benchmark))
 
 
 def benchmark_cancel_plan():
