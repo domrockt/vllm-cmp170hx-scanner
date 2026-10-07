@@ -27,8 +27,8 @@ dist\vllm-observability-windows-x64.exe
 ## Install
 
 ```bash
-git clone https://github.com/domrockt/vllm-observability.git
-cd vllm-observability
+git clone https://github.com/domrockt/vllm-cmp170hx-scanner.git
+cd vllm-cmp170hx-scanner
 ./install.sh
 ```
 
