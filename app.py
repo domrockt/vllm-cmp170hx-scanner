@@ -282,6 +282,16 @@ def http_get(url, timeout):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
 
+def configured_host():
+    import os
+    for line in (os.environ.get("VLLM_HOST",""),):
+        if line: return line
+    try:
+        for raw in open(".env",encoding="utf-8"):
+            if raw.startswith("VLLM_HOST="): return raw.split("=",1)[1].strip()
+    except Exception: pass
+    return ""
+
 def discover():
     cmd = "docker ps --format '%s'" % DOCKER_PS_FMT
     try:

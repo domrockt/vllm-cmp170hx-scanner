@@ -24,6 +24,12 @@ set PORT=8090
 dist\vllm-observability-windows-x64.exe
 ```
 
+## Where to install
+
+Install the dashboard on the same computer that runs vLLM and the CMP 170HX. GPU, RAM, NVMe and fuse readout are local hardware reads and are complete only there.
+
+If vLLM runs on another computer, `./install.sh` asks for its host or IP and saves it in `.env` as `VLLM_HOST`. Hardware details may then be limited, but vLLM metrics remain available.
+
 ## Install
 
 ```bash
