@@ -513,6 +513,7 @@ byId("discover").addEventListener("click", async () => {
 
 byId("benchmark-start").addEventListener("click", benchmarkStart);
 byId("benchmark-cancel").addEventListener("click", benchmarkCancel);
+byId("benchmark-history-clear")?.addEventListener("click", event=>{event.preventDefault(); event.stopPropagation(); clearBenchmarkHistory();});
 
 async function tick() {
   if (requestInFlight) return;
@@ -572,9 +573,15 @@ byId("fuse-start").addEventListener("click", fuseStart);
 initLanguage();
 applyLanguage();
 
+async function clearBenchmarkHistory(){ if(!confirm("Gespeicherte Benchmarks löschen?")) return; await fetch("/api/benchmark/history/clear",{method:"POST"}); await refresh(); }
+let benchmarkHistorySignature="";
 function renderBenchmarkHistory(){
   const runs=(DATA.benchmark&&DATA.benchmark.history)||[];
-  const body=byId("benchmark-history-body"); if(!body) return;
+  const root=byId("benchmark-history"), body=byId("benchmark-history-body"); if(!body) return;
+  const signature=JSON.stringify(runs);
+  if(signature===benchmarkHistorySignature) return;
+  benchmarkHistorySignature=signature;
+  const open=root&&root.open, opened=[...body.querySelectorAll("details")].filter(x=>x.open).map(x=>x.querySelector("summary")?.textContent||"");
   const groups={}; runs.forEach(r=>{(groups[r.model||"unbekannt"] ||= []).push(r)});
   body.innerHTML=Object.entries(groups).map(([model,items])=>`<details><summary>${escapeHtml(model)} · ${items.length}</summary>${items.slice().reverse().map(r=>`<p><b>${new Date((r.at||0)*1000).toLocaleString()}</b> · ${escapeHtml(r.state||"")}<br>Parameter: ${escapeHtml(JSON.stringify(r.params||{}))}<br>Ergebnis: ${escapeHtml((r.results||[]).map(x=>`C${x.c}: ${x.tokens_s??"N/A"} tok/s`).join(" · "))}</p>`).join("")}</details>`).join("")||"<p>Noch keine gespeicherten Benchmarks.</p>";
 }

@@ -1045,6 +1045,13 @@ class H(BaseHTTPRequestHandler):
                 result = benchmark_start_plan(payload.get("confirm") is True)
             self._send(200 if result["ok"] else 409, json.dumps(result, ensure_ascii=False), "application/json")
             return
+        if p == "/api/benchmark/history/clear":
+            with REG.lock:
+                try: Path(HISTORY_PATH).write_text("[]", encoding="utf-8")
+                except Exception as exc:
+                    self._send(500, json.dumps({"ok": False, "error": str(exc)}), "application/json"); return
+                self._send(200, json.dumps({"ok": True, "benchmark": benchmark_public()}), "application/json")
+            return
         if p == "/api/benchmark/cancel":
             with REG.lock:
                 benchmark = benchmark_cancel_plan()
@@ -1140,7 +1147,7 @@ def benchmark_request(endpoint, model, cancel_check=lambda: False):
     """One bounded, OpenAI-compatible baseline request; never changes vLLM."""
     if cancel_check():
         return {"ok": False, "error": "cancelled"}
-    payload = {"model": model, "messages": [{"role": "user", "content": "Reply with BENCHMARK_OK."}], "max_tokens": 2048, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    payload = {"model": model, "messages": [{"role": "user", "content": "Write a long neutral counting sequence. Do not stop early."}], "max_tokens": 2048, "temperature": 0, "ignore_eos": True, "chat_template_kwargs": {"enable_thinking": False}}
     started = time.monotonic()
     try:
         req = urllib.request.Request(endpoint + "/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
@@ -1291,6 +1298,10 @@ def benchmark_worker(run_id):
         with REG.lock:
             b=REG.benchmark; target=REG.instances.get(b["target_instance_id"])
             if len(good)!=c: b.update(state="ABORTED",reason=next((r.get("error") for r in rows if not r.get("ok")),"request_failed"),finished_at=time.time()); phase.update(state="FAILED",results=rows); return
+            for _ in range(10):
+                target=REG.instances.get(b["target_instance_id"], {})
+                if int(target.get("running") or 0)==0 and int(target.get("waiting") or 0)==0: break
+                time.sleep(0.5)
             guard=benchmark_phase_guard(target or {},0,None,None)
             if not guard["ok"]: b.update(state="ABORTED",reason=guard["code"],finished_at=time.time()); phase.update(state="ABORTED",results=rows); return
             tokens=sum(r["completion_tokens"] for r in good)
