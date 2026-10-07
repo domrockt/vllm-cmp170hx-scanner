@@ -1052,6 +1052,12 @@ except Exception as e:
     INDEX_HTML = "<h1>install missing: %s</h1>" % e
     APP_JS = ""
 
+PAYPAL_URL=os.environ.get("PAYPAL_URL","").strip()
+
+def support_public():
+    return {"paypal_url": PAYPAL_URL}
+
+
 def main():
     t1 = threading.Thread(target=discovery_loop, daemon=True)
     t2 = threading.Thread(target=collect_loop, daemon=True)
