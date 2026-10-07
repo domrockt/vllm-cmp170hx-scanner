@@ -1,6 +1,6 @@
 # vLLM Observability
 
-[PayPal – Trinkgeldkasse](https://www.paypal.com/qrcodes/managed/8741013d-a84b-42e2-8ca6-a8867c381422)
+[Buy me a coffee](https://www.paypal.com/qrcodes/managed/8741013d-a84b-42e2-8ca6-a8867c381422)
 
 Self-discovering dashboard for vLLM, NVIDIA GPUs and host hardware. It binds to `0.0.0.0:8080`, so every computer in the local network can open it.
 
