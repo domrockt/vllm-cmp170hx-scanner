@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM Observability — AI PC</title>
+<style>
+:root{--bg:#070b11;--surface:#0d141e;--surface2:#111b28;--line:#203044;--fg:#dce9f7;--dim:#8195aa;--cyan:#48cae4;--green:#32d6a0;--amber:#f6b94b;--red:#ff6678;--blue:#5aa9ff;--radius:12px}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:radial-gradient(circle at 15% 0,#102238 0,transparent 32%),var(--bg);color:var(--fg);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}button{font:inherit}.topbar{position:sticky;top:0;z-index:10;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 16px;background:rgba(7,11,17,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}.brand{font-weight:800;letter-spacing:.08em;margin-right:4px}.chip,.tag,.state{border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--dim);font-size:11px;letter-spacing:.04em}.chip.ok,.state.online{color:var(--green);border-color:#21654f}.chip.idle,.state.stale,.state.degraded{color:var(--amber);border-color:#685226}.chip.err,.state.offline{color:var(--red);border-color:#6c2935}.bench-state{border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11px;letter-spacing:.06em;font-weight:700;display:inline-block}.bench-state.neutral{color:var(--dim);border-color:#324458;background:#0a131d}.bench-state.amber{color:var(--amber);border-color:#685226;background:#1f1809}.bench-state.green{color:var(--green);border-color:#21654f;background:#0c1c16}.bench-state.red{color:var(--red);border-color:#6c2935;background:#1f0d11}.bench-warn{color:var(--amber);font-size:12px;margin:6px 0 10px}.bench-buttons{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.bench-buttons .button{padding:7px 12px}.bench-target{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.bench-target .tag{color:var(--dim)}.bench-target .tag strong{color:var(--fg);font-weight:600;margin-left:4px}.bench-reason{margin-top:6px;font-size:12px;color:var(--dim)}.bench-reason strong{color:var(--amber);font-weight:600}.bench-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.bench-table th,.bench-table td{border-bottom:1px solid #1b2a3a;padding:6px 8px;text-align:left;vertical-align:top}.bench-table th{color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase}.bench-table td.mono{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#bcd0e4}.bench-table tr:last-child td{border-bottom:0}.bench-info{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px;font-size:12px;color:var(--dim)}.bench-info span strong{color:var(--fg);font-weight:600;margin-left:4px}.bench-feedback{margin-top:8px;font-size:12px;min-height:16px}.bench-feedback.err{color:var(--red)}.bench-feedback.ok{color:var(--green)}.spacer{flex:1}.button{cursor:pointer;background:#142133;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-weight:700}.button:hover,.button.active{border-color:var(--cyan);color:var(--cyan)}.range{display:flex;gap:5px}.range .button{padding:4px 8px;font-size:11px}main{max-width:1540px;margin:0 auto;padding:16px}.section{margin-bottom:18px}.section-title{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}.section-title h2{font-size:13px;letter-spacing:.14em;margin:0;color:#bcd0e4}.section-title span{font-size:11px;color:var(--dim)}.card{background:linear-gradient(145deg,rgba(17,27,40,.96),rgba(10,16,24,.96));border:1px solid var(--line);border-radius:var(--radius);padding:13px;box-shadow:0 12px 36px rgba(0,0,0,.18)}.card.offline{border-color:#482431}.card.stale{border-color:#5d4923}.alerts{display:flex;flex-direction:column;gap:8px}.alert-card{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:#0a1623;border:1px solid #1b2a3a;border-left-width:3px;border-radius:10px;padding:10px 12px}.alert-card.alert-critical{border-left-color:var(--red);border-color:#6c2935}.alert-card.alert-warning{border-left-color:var(--amber);border-color:#685226}.alert-sev{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:800;padding:4px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}.alert-critical .alert-sev{color:var(--red);border-color:#6c2935;background:#3a141e}.alert-warning .alert-sev{color:var(--amber);border-color:#685226;background:#3d2c12}.alert-msg{font-size:13px;color:var(--fg)}.alert-msg .alert-code{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:11px;margin-right:6px}.alert-meta{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}.alert-meta .alert-value{display:inline-block;margin-left:6px;color:var(--fg);font-family:ui-monospace,Menlo,monospace}.alert-empty{color:var(--dim);font-size:13px;padding:10px 12px;border:1px dashed #243a44;border-radius:8px;background:#0a121b}.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px}.kpi{min-height:84px;background:#09111b;border:1px solid #1b2a3a;border-radius:10px;padding:10px 11px}.kpi .label,.metric .label{font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}.kpi .value{font:700 25px/1.25 ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:5px;color:#edf7ff}.kpi .unit{font-size:10px;color:var(--dim);margin-left:4px}.help{margin-top:9px;color:var(--dim);font-size:11px}.instance-list{display:grid;gap:12px}.instance-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-bottom:9px;margin-bottom:10px;border-bottom:1px solid var(--line)}.instance-head .model{font-weight:800;color:var(--cyan);font-size:15px}.instance-meta{margin-left:auto;color:var(--dim);font-size:11px}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:7px}.metric{background:#09111b;border:1px solid #1a2939;border-radius:8px;padding:7px 9px;min-height:53px}.metric .value{font:600 13px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:4px;overflow-wrap:anywhere}.error{margin-top:8px;color:var(--red);font-size:11px}.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-top:10px}.chart{background:#080f18;border:1px solid #19283a;border-radius:8px;padding:7px}.chart-title{font-size:10px;letter-spacing:.07em;color:var(--dim);margin-bottom:3px}.chart canvas{display:block;width:100%;height:105px}.gpu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px}.gpu-name{font-weight:800;color:var(--blue);margin-bottom:8px}.gpu-bar{height:6px;background:#172333;border-radius:99px;overflow:hidden;margin:5px 0 9px}.gpu-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:99px}.empty{padding:26px;text-align:center;color:var(--dim);border:1px dashed var(--line);border-radius:var(--radius)}.na{color:#556575}.footer{max-width:1540px;margin:0 auto;padding:2px 16px 18px;color:var(--dim);font-size:11px}@media(max-width:720px){.topbar{position:static}.spacer{display:none}.instance-meta{margin-left:0;width:100%}.kpi .value{font-size:21px}.charts{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">◈ vLLM OBSERVABILITY</span>
+  <span id="host-status" class="chip">HOST …</span>
+  <span id="vllm-status" class="chip">vLLM …</span>
+  <span id="last-update" class="chip">UPDATE …</span>
+  <span id="host-label" class="chip">local host</span>
+  <button id="discover" class="button" data-i18n="discover">↻ DISCOVER</button><select id="language" class="button" aria-label="Language"></select>
+  <span id="discover-info" class="chip"></span>
+  <span class="spacer"></span>
+  <div id="range" class="range" aria-label="Zeitraum">
+    <button class="button" data-seconds="60">1m</button>
+    <button class="button active" data-seconds="300">5m</button>
+    <button class="button" data-seconds="900">15m</button>
+    <button class="button" data-seconds="3600">1h</button>
+  </div>
+</header>
+<section id="alerts-section" class="section" aria-labelledby="alerts-title">
+  <div class="section-title">
+    <h2 id="alerts-title" data-i18n="alerts">HEALTH ALERTS</h2>
+    <span id="alerts-summary"></span>
+  </div>
+  <div class="card">
+    <div id="alerts-empty" class="alert-empty">No active alerts.</div>
+    <div id="alerts-list" class="alerts" hidden></div>
+  </div>
+</section>
+<main>
+  <section class="section" aria-labelledby="global-title">
+    <div class="section-title"><h2 id="global-title" data-i18n="global">GLOBAL STATUS</h2><span>semantisch sichere Aggregate</span></div>
+    <div class="card">
+      <div id="global-kpis" class="kpi-grid"></div>
+      <div class="help">Token-Raten sind aggregierter <b>Server-Throughput</b> aller aktiven Endpoints und keine Geschwindigkeit eines einzelnen <b>Einzelrequest</b>. Globales KV ist der Maximalwert; globale Latenz zeigt den schlechtesten Instanz-p50.</div>
+    </div>
+  </section>
+  <section class="section" aria-labelledby="instances-title">
+    <div class="section-title"><h2 id="instances-title" data-i18n="instances">vLLM INSTANCES</h2><span id="instance-summary"></span></div>
+    <div id="empty" class="empty">Keine vLLM-Instanz entdeckt.</div>
+    <div id="instances" class="instance-list"></div>
+  </section>
+  <section class="section" aria-labelledby="gpu-title">
+    <div class="section-title"><h2 id="gpu-title" data-i18n="gpus">GPU STATUS</h2><span id="gpu-time"></span></div>
+    <div id="gpu-grid" class="gpu-grid"></div>
+  </section>
+  <section class="section" aria-labelledby="system-title">
+    <div class="section-title"><h2 id="system-title" data-i18n="system">SYSTEM</h2><span id="system-time">Mainboard · CPU · RAM · NVMe · PLX</span></div>
+    <div id="system-grid" class="kpi-grid"></div>
+  </section>
+  <section class="section" aria-labelledby="benchmark-title">
+    <div class="section-title"><h2 id="benchmark-title" data-i18n="benchmark">BENCHMARK SUITE</h2><span id="benchmark-summary">isolierte Last gegen Ziel-Instanz</span></div>
+    <div class="card">
+      <div class="bench-warn" id="benchmark-safety">Achtung: isolierte Last nur gegen die ausgewählte Ziel-Instanz · <strong>automatically aborts on foreign traffic</strong> (jede fremde Aktivität bricht den Lauf sofort ab).</div>
+      <div class="bench-buttons">
+        <button id="benchmark-start" class="button" type="button"><span data-i18n="startBench">▶ START BENCHMARK</span></button>
+        <button id="benchmark-cancel" class="button" type="button" hidden>■ CANCEL</button>
+        <span id="benchmark-state" class="bench-state neutral">READY</span>
+      </div>
+      <div class="bench-target" id="benchmark-target" aria-label="Ziel-Instanz"></div>
+      <div class="bench-reason" id="benchmark-reason" hidden></div>
+      <div class="bench-info" id="benchmark-info"></div>
+      <div id="benchmark-feedback" class="bench-feedback" role="status" aria-live="polite"></div>
+      <table class="bench-table" id="benchmark-table" hidden>
+        <thead>
+          <tr>
+            <th scope="col">Concurrency</th>
+            <th scope="col">State</th>
+            <th scope="col">Result</th>
+          </tr>
+        </thead>
+        <tbody id="benchmark-phases"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="section" aria-labelledby="fuse-title">
+    <div class="section-title"><h2 id="fuse-title" data-i18n="silicon">SILIZIUM-PRÜFUNG</h2><span>nur lesen: gesperrt oder defekt</span></div>
+    <article class="card"><button id="fuse-start" class="button" type="button"><span data-i18n="readFuses">Fuse-Masken lesen</span></button><div id="fuse-status" class="help"></div><div id="fuse-cards" class="gpu-grid"></div></article>
+  </section>
+</main>
+<footer class="footer">Live-Quellen: vLLM Prometheus <code>/metrics</code>, Docker-Discovery und <code>nvidia-smi</code>. N/A bedeutet nicht verfügbar; 0 ist ein gemessener Nullwert.</footer>
+<script src="/app.js"></script>
+</body>
+</html>
