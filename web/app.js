@@ -118,13 +118,37 @@ function renderHeader() {
   byId("discover-info").textContent = DATA.discover_msg === "OK" ? "" : (DATA.discover_msg || "");
 }
 
+
+function perRunning(metrics) {
+  const running = metrics && metrics.running;
+  const decode = metrics && metrics.decode_tps;
+  if (!finite(running) || running <= 0 || !finite(decode)) return null;
+  return decode / running;
+}
+
+function peakRunning(item) {
+  const tail = (item.tail || []).filter(point => !DATA.now || DATA.now - point.ts <= RANGE_SECONDS);
+  const values = tail.map(point => point.running).filter(finite);
+  return values.length ? Math.max(...values) : null;
+}
+
+function slotRow(running, peak) {
+  const now = finite(running) ? Math.max(0, Math.round(running)) : 0;
+  const high = finite(peak) ? Math.max(now, Math.round(peak)) : now;
+  const slots = Math.max(high, now, 1);
+  const cells = Array.from({length: slots}, (_, i) => `<span class="${i < now ? "on" : ""}"></span>`).join("");
+  return `<div class="kpi slots"><div class="label">Concurrent</div><div class="slot-row" title="Aktiv ${now}, Peak im Fenster ${finite(peak) ? Math.round(peak) : "N/A"}">${cells}</div><div class="help">${now} aktiv${finite(peak) ? ` · Peak ${Math.round(peak)}` : ""}</div></div>`;
+}
+
 function renderGlobal() {
   const a = DATA.aggregate || {};
   const cards = [
     ["Decode", number(a.decode_tps), "tok/s", "Aggregierter Output-Token-Server-Throughput aller aktiven vLLM-Endpunkte."],
     ["Prefill", number(a.prefill_tps), "tok/s", "Aggregierter Prompt-Token-Server-Throughput aller aktiven vLLM-Endpunkte."],
     ["Total", number(a.total_tps), "tok/s", "Decode plus Prefill; kein Einzelrequest-Messwert."],
-    ["Running", integer(a.running), "", "Summe aktuell laufender Requests."],
+    ["Running", integer(a.running), "", "Summe aktuell laufender Requests. Momentaufnahme, kein Mittel über das Intervall."],
+    ["Peak", integer(a.running_peak), "", "Höchste gleichzeitig laufende Requests im gewählten Zeitfenster."],
+    ["Ø / Request", number(a.decode_per_running), "tok/s", "Aggregierter Decode geteilt durch Running. Nur der Schnitt, keine einzelne Request-Kurve."],
     ["Waiting", integer(a.waiting), "", "Summe aktuell wartender Requests."],
     ["KV max", percent(a.kv_cache_usage_max), "", "Maximale KV-Cache-Auslastung einer aktiven Instanz; nicht summiert."],
     ["TTFT p50 worst", finite(a.ttft_p50_max) ? number(a.ttft_p50_max) : "N/A", "ms", "Höchster aktueller TTFT-p50 einer aktiven Instanz."],
@@ -173,6 +197,8 @@ function renderInstances() {
         ${kpi("Prefill", show(m.prefill_tps), "tok/s", "Prompt-Token-Server-Throughput dieser Instanz im letzten Sample-Intervall.")}
         ${kpi("Total", show(m.total_tps), "tok/s", "Decode plus Prefill dieser Instanz.")}
         ${kpi("Running", show(m.running, integer), "", "Aktuell laufende Requests.")}
+        ${kpi("Ø / Request", show(perRunning(m), number), "tok/s", "Decode dieser Instanz geteilt durch Running. Schnitt, nicht eine einzelne Anfrage.")}
+        ${slotRow(m.running, peakRunning(item))}
         ${kpi("Waiting", show(m.waiting, integer), "", "Aktuell wartende Requests.")}
         ${kpi("KV cache", show(m.kv_cache_usage, percent), "", "Von vLLM gemeldete KV-Cache-Auslastung.")}
       </div>

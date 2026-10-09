@@ -992,12 +992,16 @@ def build_aggregate(instances):
                 values.append(value)
         return max(values) if values else None
 
+    running = summed("running")
+    decode = summed("decode_tps")
     return {
         "active_instances": len(live),
-        "decode_tps": summed("decode_tps"),
+        "decode_tps": decode,
         "prefill_tps": summed("prefill_tps"),
         "total_tps": summed("total_tps"),
-        "running": summed("running"),
+        "running": running,
+        "running_peak": None,
+        "decode_per_running": round(decode / running, 1) if isinstance(decode, (int, float)) and isinstance(running, (int, float)) and running > 0 else None,
         "waiting": summed("waiting"),
         "requests_s": summed("requests_s"),
         "kv_cache_usage_max": maximum("kv_cache_usage"),
