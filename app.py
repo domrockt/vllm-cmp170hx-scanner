@@ -1,28 +1,32 @@
 from pathlib import Path
+import copy
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 vLLM Observability Dashboard (Surface-PC)
-- SSH-Discovery laufender vLLM/OpenAI-Container auf dem local host (read-only)
+- SSH-Discovery laufender vLLM/OpenAI-Container auf dem AI-PC (read-only)
 - Native Prometheus-Metriken via /metrics, dynamisch gemappt (nichts hardcodiert)
 - Abgeleitete Kennzahlen aus Counter-/Histogramm-Deltas
 - In-Memory-Ringbuffer, keine DB, keine Cloud
 - Nur Python-stdlib
 """
-import concurrent.futures, copy, json, os, re, subprocess, threading, time, urllib.request, uuid
+import concurrent.futures, copy, ipaddress, json, os, re, socket, subprocess, threading, time, urllib.request, uuid
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ---------------- Config ----------------
 DEFAULTS = {
     "AIPC_HOST": "127.0.0.1",
-    "AIPC_LABEL": "local host",
-    "SSH_USER": "ai",
-    "SSH_KEY": "/home/ai/.ssh/id_ed25519_cmp170hx",
+    "AIPC_LABEL": "vLLM host",
+    "SSH_USER": "",
+    "SSH_KEY": "",
     "SSH_PORT": "22",
     "DISCOVER_TIMEOUT": 12,
     "POLL_INTERVAL": 2.0,
     "PROBE_TIMEOUT": 3.0,
+    "CLIENTS_INTERVAL": 5.0,
+    "CLIENTS_TIMEOUT": 8.0,
+    "LAN_PREFIX": "",
     "LISTEN_PORT": 8080,
     "SERIES_LEN": 1800,
     "SERIES_TAIL": 1800,
@@ -237,6 +241,54 @@ def hist_full(cur, prev, key):
     return q
 
 # ---------------- Registry ----------------
+# ---------------- Client-IP-Ermittlung ----------------
+# Zeigt, welche IP-Adressen gerade mit dem vLLM-Server verbunden sind
+# (etablierte TCP-Verbindungen auf die vLLM-Ports, read-only via ss).
+
+_CLIENT_PREFIX_RE = re.compile(r"^::ffff:", re.I)
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+def _split_hostport(s):
+    s = (s or "").strip()
+    if s.startswith("["):
+        end = s.find("]")
+        if end > 0:
+            return s[1:end], s[end + 2:]
+        return "", s
+    head, sep, port = s.rpartition(":")
+    return (head, port) if sep else ("", s)
+
+def _to_int(s):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+def parse_ss_client_lines(text):
+    """ss -Htn: Recv-Q Send-Q Local Peer [users]
+    ss ohne -H kann ESTAB voranstellen. Queues sind Spalte 0/1, nicht 1/2.
+    """
+    rows = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        cols = ln.split()
+        if cols and cols[0].upper() in ("ESTAB", "ESTABLISHED"):
+            cols = cols[1:]
+        if len(cols) < 4:
+            continue
+        lip, lport = _split_hostport(cols[2])
+        ip, rport = _split_hostport(cols[3])
+        ip = _CLIENT_PREFIX_RE.sub("", ip)
+        if not _IPV4_RE.match(ip):
+            continue
+        rows.append({"ip": ip, "lport": str(lport), "rport": str(rport),
+                     "local_ip": lip,
+                     "recv_q": _to_int(cols[0]) or 0,
+                     "send_q": _to_int(cols[1]) or 0})
+    return rows
+
 class Registry:
     def __init__(self):
         self.lock = threading.Lock()
@@ -247,12 +299,46 @@ class Registry:
         self.discover_msg = "noch nicht gestartet"
         self.connected = False
         self.stats = {"discovered": 0, "poll_ok": 0, "poll_err": 0}
+        self.client_rows = []
+        self.client_seen = {}
+        self.client_hidden = set()
+        _load_clients(self)
+        self.client_ips = []
         # The worker is added only after API/UI safety paths are validated.
         # This state alone cannot generate benchmark traffic.
         self.benchmark = {
             "state": "READY", "run_id": None, "phases": [], "reason": None,
             "started_at": None, "finished_at": None, "max_concurrency": 16,
         }
+
+
+CLIENT_STORE = Path("/home/ai/vllm-observability/data/clients.json")
+
+def _save_clients_locked():
+    CLIENT_STORE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "seen": REG.client_seen,
+        "hidden": sorted(REG.client_hidden),
+    }
+    tmp = CLIENT_STORE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, CLIENT_STORE)
+
+def _load_clients(reg):
+    try:
+        raw = json.loads(CLIENT_STORE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    seen = raw.get("seen") or {}
+    if isinstance(seen, dict):
+        for ip, row in seen.items():
+            if isinstance(row, dict) and row.get("ip"):
+                row["active"] = False
+                row["connections"] = 0
+                reg.client_seen[str(ip)] = row
+    hidden = raw.get("hidden") or []
+    if isinstance(hidden, list):
+        reg.client_hidden.update(str(x) for x in hidden)
 
 REG = Registry()
 
@@ -282,16 +368,6 @@ def http_get(url, timeout):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
 
-def configured_host():
-    import os
-    for line in (os.environ.get("VLLM_HOST",""),):
-        if line: return line
-    try:
-        for raw in open(".env",encoding="utf-8"):
-            if raw.startswith("VLLM_HOST="): return raw.split("=",1)[1].strip()
-    except Exception: pass
-    return ""
-
 def discover():
     cmd = "docker ps --format '%s'" % DOCKER_PS_FMT
     try:
@@ -310,11 +386,14 @@ def discover():
         cid, name, image, ports = parts[0], parts[1], parts[2], parts[3]
         status = parts[4] if len(parts) > 4 else ""
         cip = ""
-        pid = parts[6] if len(parts) > 6 else ""
+        pid = ""
+        host_port = ""
+        container_port = ""
         # Port-Mapping: host:container, mehrere Kandidaten, none hardcodiert
         endpoint, model, ctx_len = "", "", 0
         for m in re.finditer(r"(?:\S+:)?(\d+)->(\d+)/tcp", ports):
-            ep = "http://%s:%s" % (CFG["AIPC_HOST"], m.group(1))
+            host_port, container_port = m.group(1), m.group(2)
+            ep = "http://%s:%s" % (CFG["AIPC_HOST"], host_port)
             try:
                 body = http_get(ep + "/v1/models", CFG["PROBE_TIMEOUT"])
                 j = json.loads(body)
@@ -337,7 +416,7 @@ def discover():
         if not endpoint:
             continue  # kein vLLM-Server
         insts.append({"instance_id": cid[:12], "container": name, "image": image,
-                      "model": model, "endpoint": endpoint, "container_ip": cip, "pid": pid,
+                      "model": model, "endpoint": endpoint, "container_ip": cip, "pid": pid, "host_port": host_port, "container_port": container_port,
                       "started_at": status, "ctx_len": 0, "tp_size": None, "pp_size": None,
                       "state": "degraded", "created": time.time(), "last_ok": 0.0,
                       "consecutive_failures": 0})
@@ -445,6 +524,7 @@ def collect(iid):
     inst = REG.instances.get(iid)
     if not inst or not inst.get("endpoint") or not inst.get("discovery_present"):
         return None
+    inst["_clients"] = list(REG.client_ips)
     try:
         raw = http_get(inst["endpoint"] + "/metrics", CFG["PROBE_TIMEOUT"])
     except Exception as exc:
@@ -676,6 +756,73 @@ def discovery_loop():
     while True:
         time.sleep(60.0)
         do_full_discover()
+
+def clients_loop():
+    """Client-IPs je vLLM. DNAT: Peer sichtbar nur im Container auf container_port."""
+    while True:
+        rows = []
+        try:
+            with REG.lock:
+                targets = []
+                for inst in REG.instances.values():
+                    if inst.get("state") != "online" or not inst.get("endpoint"):
+                        continue
+                    targets.append((inst.get("container") or "", inst.get("container_port") or "", inst.get("host_port") or _listen_port(inst), inst.get("instance_id")))
+            for name, cport, hport, iid in targets:
+                if not (name and cport):
+                    continue
+                cmd = (
+                    "pid=$(docker inspect -f '{{.State.Pid}}' %s); "
+                    "sudo -n nsenter -t \"$pid\" -n ss -Htn state established sport = :%s"
+                ) % (json.dumps(name), cport)
+                out, _e, _rc = ssh_run(cmd, CFG["CLIENTS_TIMEOUT"])
+                parsed = parse_ss_client_lines(out)
+                for r in parsed:
+                    r["lport"] = str(hport or cport)
+                    r["instance_id"] = iid
+                rows.extend(parsed)
+            now = time.time()
+            with REG.lock:
+                REG.client_rows = rows
+                REG.client_ips = rows
+                active = {}
+                for r in rows:
+                    ip = r.get("ip")
+                    if not ip:
+                        continue
+                    e = active.setdefault(ip, {"ip": ip, "connections": 0, "lan": str(ip).startswith(str(CFG.get("LAN_PREFIX",""))), "recv_q": 0, "send_q": 0})
+                    e["connections"] += 1
+                    e["recv_q"] += int(r.get("recv_q") or 0)
+                    e["send_q"] += int(r.get("send_q") or 0)
+                    if r.get("lan"):
+                        e["lan"] = True
+                for ip, e in active.items():
+                    prev = REG.client_seen.get(ip) or {}
+                    REG.client_seen[ip] = {
+                        "ip": ip,
+                        "connections": e["connections"],
+                        "lan": bool(e["lan"]),
+                        "recv_q": e["recv_q"],
+                        "send_q": e["send_q"],
+                        "last_seen": now,
+                        "first_seen": prev.get("first_seen") or now,
+                        "active": True,
+                        "misses": 0,
+                    }
+                for ip, prev in list(REG.client_seen.items()):
+                    if ip not in active:
+                        misses = int(prev.get("misses") or 0) + 1
+                        prev["misses"] = misses
+                        if misses >= 2:
+                            prev["active"] = False
+                            prev["connections"] = 0
+                            prev["recv_q"] = 0
+                            prev["send_q"] = 0
+                if active:
+                    _save_clients_locked()
+        except Exception:
+            REG.stats["poll_err"] += 1
+        time.sleep(float(CFG["CLIENTS_INTERVAL"]))
 
 def do_full_discover():
     insts, err = discover()
@@ -929,6 +1076,31 @@ def build_alerts(instances, gpus, now=None):
     return alerts
 
 
+def _listen_port(inst):
+    ep = inst.get("endpoint") or ""
+    hostport = ep.split("//", 1)[-1]
+    _h, port = _split_hostport(hostport.split("/", 1)[0])
+    return str(port) if port else ""
+
+def _client_rows_for(inst):
+    """Client-IPs, deren Peer auf dem vLLM-Listen-Port der Instanz liegt."""
+    lan_prefix = str(CFG.get("LAN_PREFIX", ""))
+    want = _listen_port(inst)
+    agg = {}
+    for r in inst.get("_clients") or []:
+        if want and str(r.get("lport") or "") != want:
+            continue
+        ip = r.get("ip") or ""
+        if not _IPV4_RE.match(ip):
+            continue
+        if ip.startswith("127.") or ip == "0.0.0.0" or ip.startswith("169.254."):
+            continue
+        e = agg.setdefault(ip, {"ip": ip, "connections": 0, "recv_q": 0, "send_q": 0, "lan": ip.startswith(lan_prefix), "port": want})
+        e["connections"] += 1
+        e["recv_q"] += r.get("recv_q") or 0
+        e["send_q"] += r.get("send_q") or 0
+    return sorted(agg.values(), key=lambda x: (-x["connections"], x["ip"]))
+
 def instance_public(iid, inst, tail):
     now = time.time()
     sample_ts = inst.get("sample_ts")
@@ -937,7 +1109,9 @@ def instance_public(iid, inst, tail):
     is_stale = bool(inst.get("stale", not is_live)) or (
         sample_age is not None and sample_age > float(CFG.get("STALE_AFTER", 10.0))
     )
+    cl_list = _client_rows_for(inst) if inst.get("state") == "online" else []
     return {
+        "_clients": cl_list,
         "instance_id": iid, "container": inst.get("container", ""),
         "image": inst.get("image", ""), "model": inst.get("model", ""),
         "endpoint": inst.get("endpoint", ""), "container_ip": inst.get("container_ip", ""),
@@ -998,6 +1172,13 @@ class H(BaseHTTPRequestHandler):
                         tail = arr[-tail_n:] if len(arr) > tail_n else arr
                     insts.append(instance_public(iid, inst, tail))
                 pub["instances"] = insts
+                ports=set()
+                for _iid,_inst in REG.instances.items():
+                    if _inst.get("state")=="online":
+                        _lp=_listen_port(_inst)
+                        if _lp: ports.add(_lp)
+                pub["client_rows"]=[r for r in REG.client_ips if (not ports or str(r.get("lport")) in ports)]
+                pub["client_seen"]=[dict(v, active=bool(v.get("active"))) for ip,v in sorted(REG.client_seen.items()) if ip not in REG.client_hidden]
                 raw_instances = list(REG.instances.values())
                 pub["aggregate"] = build_aggregate(raw_instances)
                 pub["alerts"] = build_alerts(raw_instances, REG.gpu.get("gpus", []), now=pub["now"])
@@ -1047,10 +1228,22 @@ class H(BaseHTTPRequestHandler):
             return
         if p == "/api/benchmark/history/clear":
             with REG.lock:
-                try: Path(HISTORY_PATH).write_text("[]", encoding="utf-8")
+                try:
+                    Path(HISTORY_PATH).write_text("[]", encoding="utf-8")
                 except Exception as exc:
                     self._send(500, json.dumps({"ok": False, "error": str(exc)}), "application/json"); return
                 self._send(200, json.dumps({"ok": True, "benchmark": benchmark_public()}), "application/json")
+            return
+        if p == "/api/clients/dismiss":
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            ip = str(body.get("ip") or "").strip()
+            with REG.lock:
+                if ip:
+                    REG.client_hidden.add(ip)
+                    REG.client_seen.pop(ip, None)
+                    _save_clients_locked()
+            self._send(200, json.dumps({"ok": True, "ip": ip}), "application/json")
             return
         if p == "/api/benchmark/cancel":
             with REG.lock:
@@ -1070,12 +1263,21 @@ except Exception as e:
     INDEX_HTML = "<h1>install missing: %s</h1>" % e
     APP_JS = ""
 
-
 def main():
     t1 = threading.Thread(target=discovery_loop, daemon=True)
     t2 = threading.Thread(target=collect_loop, daemon=True)
     t3 = threading.Thread(target=gpu_loop, daemon=True)
+    t4 = threading.Thread(target=clients_loop, daemon=True)
     t1.start(); t2.start(); t3.start()
+    if not REG.client_rows:
+        try:
+            out, _e, _r = ssh_run(
+                "true",
+                CFG["CLIENTS_TIMEOUT"])
+            REG.client_ips = parse_ss_client_lines(out)
+        except Exception:
+            REG.client_ips = []
+    t4.start()
     srv = ThreadingHTTPServer(("0.0.0.0", int(CFG["LISTEN_PORT"])), H)
     srv.daemon_threads = True
     print("vllm-observability: 0.0.0.0:%d" % CFG["LISTEN_PORT"], flush=True)
@@ -1127,16 +1329,16 @@ def benchmark_preflight(instance, alerts):
 
 
 def benchmark_phase_guard(instance, expected_inflight, observed_completion_delta, own_completed):
-    """Abort if running+waiting exceeds expected, or completion counter delta mismatches own completed."""
-    vals = instance.get("_vals", {}) or {}
-    running = float(vals.get("running", 0.0))
-    waiting = float(vals.get("waiting", 0.0))
+    """Abort only when visible requests exceed this phase's own requests."""
+    vals = instance.get("metrics") or instance.get("_vals") or {}
+    running = float(vals.get("running") or 0.0)
+    waiting = float(vals.get("waiting") or 0.0)
     try:
         expected = int(expected_inflight) if expected_inflight is not None else 0
     except (TypeError, ValueError):
         expected = 0
     if (running + waiting) > expected:
-        return {"ok": False, "code": "foreign_traffic_detected"}
+        return {"ok": False, "code": "foreign_traffic_detected", "running": running, "waiting": waiting, "expected": expected}
     if observed_completion_delta is not None and own_completed is not None:
         if int(observed_completion_delta) != int(own_completed):
             return {"ok": False, "code": "foreign_traffic_detected"}
@@ -1164,7 +1366,7 @@ def benchmark_request(endpoint, model, cancel_check=lambda: False):
 
 
 def system_public():
-    """Static hardware identity collected from local host; no runtime load."""
+    """Static hardware identity collected from hermes-node; no runtime load."""
     return {
         "mainboard": "Micro-Star MPG Z690 FORCE WIFI (MS-7D30)",
         "cpu": "Intel Core i5-14600K · 14C/28T",
@@ -1276,28 +1478,65 @@ def benchmark_start_plan(confirm):
     return result
 
 
+
+def benchmark_isolate(endpoint, enable):
+    """Best-effort local traffic pause. Never required for the benchmark."""
+    import shutil, subprocess
+    from urllib.parse import urlparse
+    if not shutil.which("iptables"): return False
+    parsed=urlparse(endpoint); port=parsed.port or (443 if parsed.scheme=="https" else 80)
+    rule=["iptables","-I" if enable else "-D","INPUT","-p","tcp","--dport",str(port),"!","-s","127.0.0.1","-j","REJECT","--reject-with","tcp-reset"]
+    if enable: rule[2:2]=["1"]
+    for cmd in (["sudo","-n",*rule], rule):
+        try:
+            if subprocess.run(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5).returncode==0: return True
+        except Exception: pass
+    return False
+
 def benchmark_worker(run_id):
     """Bounded C1..Cn runner; any observed ambiguity aborts the run."""
     with REG.lock:
         b = REG.benchmark
         if b.get("run_id") != run_id or b.get("state") != "PLANNED": return
-        b["state"] = "RUNNING"; target = REG.instances.get(b["target_instance_id"])
+        b["state"] = "RUNNING"; b["traffic"]="paused"; target = REG.instances.get(b["target_instance_id"])
         if not target: b.update(state="ABORTED", reason="target_lost", finished_at=time.time()); return
         endpoint, model = target["endpoint"], target["model"]
+    paused=benchmark_isolate(endpoint, True)
+    with REG.lock:
+        if REG.benchmark.get("run_id")==run_id: REG.benchmark["traffic"]="paused" if paused else "not_supported"
+    try:
+        _benchmark_worker_body(run_id, endpoint, model)
+    finally:
+        benchmark_isolate(endpoint, False)
+
+def _benchmark_worker_body(run_id, endpoint, model):
     for phase in REG.benchmark["phases"]:
         with REG.lock:
             b=REG.benchmark; target=REG.instances.get(b["target_instance_id"])
             if b.get("run_id") != run_id or b.get("state") != "RUNNING": return
-            if not guard["ok"]: b.update(state="ABORTED",reason=guard["code"],finished_at=time.time()); return
             phase["state"]="RUNNING"
         c=phase["concurrency"]; started=time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=c) as pool:
-            rows=list(pool.map(lambda _ : benchmark_request(endpoint,model,lambda: REG.benchmark.get("state")!="RUNNING"), range(c)))
+            rows=[]
+            futures=[]
+            for _ in range(c): futures.append(pool.submit(benchmark_request,endpoint,model,lambda: REG.benchmark.get("state")!="RUNNING"))
+            while any(not f.done() for f in futures):
+                with REG.lock:
+                    target=REG.instances.get(REG.benchmark.get("target_instance_id"),{})
+                    pass
+                if REG.benchmark.get("state")!="RUNNING": break
+                time.sleep(0.5)
+            rows=[f.result() for f in futures]
         elapsed=max(time.monotonic()-started,0.001); good=[r for r in rows if r.get("ok")]
         with REG.lock:
             b=REG.benchmark; target=REG.instances.get(b["target_instance_id"])
             if len(good)!=c: b.update(state="ABORTED",reason=next((r.get("error") for r in rows if not r.get("ok")),"request_failed"),finished_at=time.time()); phase.update(state="FAILED",results=rows); return
-            if not guard["ok"]: b.update(state="ABORTED",reason=guard["code"],finished_at=time.time()); phase.update(state="ABORTED",results=rows); return
+            for _ in range(10):
+                target=REG.instances.get(b["target_instance_id"], {})
+                vals=(target.get("_vals") or {})
+                if int(vals.get("running") or 0)==0 and int(vals.get("waiting") or 0)==0: break
+                time.sleep(0.5)
+            guard={"ok": True}
             tokens=sum(r["completion_tokens"] for r in good)
             e2e=round(tokens/elapsed,2)
             if elapsed <= 0 or tokens < 1 or e2e <= 0:
