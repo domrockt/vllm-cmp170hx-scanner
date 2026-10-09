@@ -1,7 +1,7 @@
 
 const I18N={
- de:{discover:"↻ AKTUALISIEREN",alerts:"HEALTH ALERTS",global:"GLOBALSTATUS",instances:"vLLM-INSTANZEN",gpus:"GPU-STATUS",system:"SYSTEM",benchmark:"BENCHMARK",silicon:"SILIZIUMPRÜFUNG",startBench:"▶ BENCHMARK STARTEN",readFuses:"Fuse-Masken lesen",language:"Sprache"},
- en:{discover:"↻ DISCOVER",alerts:"HEALTH ALERTS",global:"GLOBAL STATUS",instances:"vLLM INSTANCES",gpus:"GPU STATUS",system:"SYSTEM",benchmark:"BENCHMARK SUITE",silicon:"SILICON CHECK",startBench:"▶ START BENCHMARK",readFuses:"Read fuse masks",language:"Language"},
+ de:{clients:"CLIENTS · WER FRÄGT AN",discover:"↻ AKTUALISIEREN",alerts:"HEALTH ALERTS",global:"GLOBALSTATUS",instances:"vLLM-INSTANZEN",gpus:"GPU-STATUS",system:"SYSTEM",benchmark:"BENCHMARK",silicon:"SILIZIUMPRÜFUNG",startBench:"▶ BENCHMARK STARTEN",readFuses:"Fuse-Masken lesen",language:"Sprache"},
+ en:{clients:"CLIENTS · WHO IS REQUESTING",discover:"↻ DISCOVER",alerts:"HEALTH ALERTS",global:"GLOBAL STATUS",instances:"vLLM INSTANCES",gpus:"GPU STATUS",system:"SYSTEM",benchmark:"BENCHMARK SUITE",silicon:"SILICON CHECK",startBench:"▶ START BENCHMARK",readFuses:"Read fuse masks",language:"Language"},
  es:{discover:"↻ ACTUALIZAR",alerts:"ALERTAS",global:"ESTADO GLOBAL",instances:"INSTANCIAS vLLM",gpus:"ESTADO GPU",system:"SISTEMA",benchmark:"BANCO DE PRUEBAS",silicon:"REVISIÓN DEL SILICIO",startBench:"▶ INICIAR PRUEBA",readFuses:"Leer máscaras",language:"Idioma"},
  fr:{discover:"↻ ACTUALISER",alerts:"ALERTES",global:"ÉTAT GLOBAL",instances:"INSTANCES vLLM",gpus:"ÉTAT GPU",system:"SYSTÈME",benchmark:"BANC DE TEST",silicon:"CONTRÔLE DU SILICIUM",startBench:"▶ DÉMARRER LE TEST",readFuses:"Lire les masques",language:"Langue"},
  zh:{discover:"↻ 刷新",alerts:"健康警报",global:"全局状态",instances:"vLLM 实例",gpus:"GPU 状态",system:"系统",benchmark:"基准测试",silicon:"芯片检查",startBench:"▶ 开始测试",readFuses:"读取熔丝掩码",language:"语言"}
@@ -245,6 +245,57 @@ function drawLine(canvas, tail, key) {
   ctx.fillText(number(high), 3, 11); ctx.fillText(number(values.at(-1)), Math.max(3, width - 55), 11);
 }
 
+function renderClients() {
+  const el = byId("clients-list");
+  if (!el) return;
+  const seen = Array.isArray(DATA.client_seen) ? DATA.client_seen : [];
+  const list = seen.filter(c => c && c.ip);
+  const activeN = list.filter(c => c.active).length;
+  byId("clients-empty").style.display = list.length ? "none" : "block";
+  el.hidden = !list.length;
+  byId("clients-summary").textContent = list.length
+    ? `${activeN} aktiv · ${list.length - activeN} ohne Anfrage`
+    : "";
+  const esc = s => escapeHtml(String(s));
+  const when = ts => {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    return d.toLocaleString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  };
+  el.innerHTML = list.map(c => {
+    const on = !!c.active;
+    const dot = on ? "#3dd68c" : "#ff5d73";
+    const label = on ? "aktiv" : "keine Anfrage";
+    return `<div class="instance-head" style="border:0;padding:6px 0;margin:0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <span title="${esc(label)}" style="width:10px;height:10px;border-radius:50%;background:${dot};box-shadow:0 0 8px ${dot};display:inline-block"></span>
+    <span class="tag"><strong>${esc(c.ip)}</strong>${c.lan ? "" : " · extern"}</span>
+    <span class="tag">${on ? (c.connections || 0) + " Verbindung(en)" : "zuletzt " + esc(when(c.last_seen))}</span>
+    <button type="button" data-dismiss-ip="${esc(c.ip)}" title="IP aus der Liste löschen" style="margin-left:auto;background:transparent;color:#ff5d73;border:1px solid #6c2935;border-radius:999px;width:28px;height:28px;cursor:pointer;font-weight:700">×</button>
+  </div>`;
+  }).join("");
+}
+
+document.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-dismiss-ip]");
+  if (!btn) return;
+  const ip = btn.getAttribute("data-dismiss-ip");
+  btn.disabled = true;
+  try {
+    await fetch("/api/clients/dismiss", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ip})});
+    await tick();
+  } catch (e) {
+    btn.disabled = false;
+  }
+});
+
+
+function gpuApps(uuid) {
+  const apps = (DATA.gpus && DATA.gpus.apps) || [];
+  const rows = apps.filter(app => app.gpu_uuid === uuid);
+  if (!rows.length) return "idle";
+  return rows.map(app => `pid ${escapeHtml(app.pid)} · ${integer(app.mem_mb)} MiB`).join(" · ");
+}
+
 function renderGpus() {
   const snapshot = DATA.gpus || {};
   const rows = snapshot.gpus || [];
@@ -266,6 +317,7 @@ function renderGpus() {
         ${metric("PCIe", `Gen ${escapeHtml(gpu.pcie_gen || "N/A")}/${escapeHtml(gpu.pcie_gen_max || "N/A")} · x${escapeHtml(gpu.pcie_width || "N/A")}/x${escapeHtml(gpu.pcie_width_max || "N/A")}`)}
         ${metric("ECC corr/uncorr", `${integer(gpu.ecc_corrected)} / ${integer(gpu.ecc_uncorrected)}`)}
         ${metric("UUID", escapeHtml(gpu.uuid || "N/A"))}
+        ${metric("Compute", gpuApps(gpu.uuid))}
       </div>
       <details data-gpu="${escapeHtml(gpu.index)}" ${open.has(String(gpu.index)) ? "open" : ""}><summary>Unlock / SM readout</summary><div class="metrics">
         ${metric("PCI ID", escapeHtml(gpu.pci_device_id || "N/A"))}
@@ -487,7 +539,7 @@ async function benchmarkCancel() {
 
 function renderAll() {
   if (!DATA) return;
-  renderHeader(); renderAlerts(); renderGlobal(); renderInstances(); renderGpus(); renderSystem();
+  renderHeader(); renderAlerts(); renderGlobal(); renderInstances(); renderClients(); renderGpus(); renderSystem();
   renderBenchmark(); renderBenchmarkHistory();
 }
 
